@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── react-phone-input-2 Dark Theme Overrides ──────────────────────────────
+   The library ships with a light theme. These overrides force all its elements
+   to match our dark admin palette. Class names are the library's own —
+   we must use !important to beat their inline specificity.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+.react-tel-input .form-control {
+  background-color: #141c35 !important;
+  border: 1px solid #1a2444 !important;
+  border-left: none !important;
+  color: #e2e8f0 !important;
+  width: 100% !important;
+  height: 42px !important;
+  font-size: 14px !important;
+  font-family: 'Outfit', sans-serif !important;
+  border-radius: 0 0.5rem 0.5rem 0 !important;
+}
+
+.react-tel-input .form-control:focus {
+  border-color: #6366f1 !important;
+  box-shadow: 0 0 0 1px #6366f1 !important;
+  outline: none !important;
+}
+
+.react-tel-input .flag-dropdown {
+  background-color: #141c35 !important;
+  border: 1px solid #1a2444 !important;
+  border-radius: 0.5rem 0 0 0.5rem !important;
+}
+
+.react-tel-input .selected-flag {
+  background-color: #141c35 !important;
+  border-radius: 0.5rem 0 0 0.5rem !important;
+}
+
+.react-tel-input .selected-flag:hover,
+.react-tel-input .selected-flag:focus {
+  background-color: #1a2444 !important;
+}
+
+.react-tel-input .flag-dropdown.open .selected-flag {
+  background-color: #1a2444 !important;
+}
+
+.react-tel-input .country-list {
+  background-color: #0f1628 !important;
+  border: 1px solid #1a2444 !important;
+  color: #e2e8f0 !important;
+  margin-top: 2px !important;
+  border-radius: 0.5rem !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+}
+
+.react-tel-input .country-list .country {
+  padding: 8px 12px !important;
+}
+
+.react-tel-input .country-list .country:hover {
+  background-color: #1a2444 !important;
+}
+
+.react-tel-input .country-list .country.highlight {
+  background-color: #141c35 !important;
+}
+
+.react-tel-input .country-list .country .country-name {
+  color: #cbd5e1 !important;
+}
+
+.react-tel-input .country-list .country .dial-code {
+  color: #818cf8 !important;
+}
+
+.react-tel-input .country-list .search {
+  background-color: #141c35 !important;
+  padding: 8px 12px !important;
+}
+
+.react-tel-input .country-list .search-box {
+  background-color: #0f1628 !important;
+  border: 1px solid #1a2444 !important;
+  color: #e2e8f0 !important;
+  border-radius: 0.375rem !important;
+  width: 100% !important;
+  font-family: 'Outfit', sans-serif !important;
+  font-size: 13px !important;
+}
+
+.react-tel-input .country-list .search-box:focus {
+  outline: none !important;
+  border-color: #6366f1 !important;
+}
+
+/* Prevent body scroll when modal is open */
+body.modal-open {
+  overflow: hidden;
+}
