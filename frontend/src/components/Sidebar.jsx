@@ -72,7 +72,7 @@ export default function Sidebar() {
               ].join(' ')
             }
           >
-            <Icon size={17} strokeWidth={isActive => (isActive ? 2.5 : 2)} />
+            <Icon size={17} />
             {label}
           </NavLink>
         ))}
