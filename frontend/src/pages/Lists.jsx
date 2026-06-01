@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+// frontend/src/pages/Lists.jsx
+
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Upload,
   FileSpreadsheet,
@@ -6,414 +8,485 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronUp,
-  Loader2,
-  AlertCircle,
-  CheckCircle2,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axiosInstance from '../api/axios';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/** Format bytes into a human-readable string e.g. "42.3 KB" */
-function formatBytes(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-// ─── Agent accordion item ─────────────────────────────────────────────────────
-
-/**
- * AccordionSection
- * Shows one agent's assigned items in a collapsible panel.
- *
- * Design decision — accordion over tabs:
- * Accordion lets the evaluator see ALL agents' data at once by scrolling.
- * Tabs hide data behind clicks, which is worse for demo purposes.
- */
-function AccordionSection({ agentName, items, defaultOpen }) {
-  const [open, setOpen] = useState(defaultOpen);
-
-  return (
-    <div className="border border-dark-500 rounded-xl overflow-hidden">
-      {/* Header */}
-      <button
-        onClick={() => setOpen((prev) => !prev)}
-        className="w-full flex items-center justify-between px-5 py-3.5 bg-dark-600/50 hover:bg-dark-600 transition-colors"
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-2 h-2 rounded-full bg-accent" />
-          <span className="text-white font-semibold text-sm font-sans">{agentName}</span>
-          <span className="bg-accent/20 text-accent-light text-xs font-mono px-2 py-0.5 rounded-full">
-            {items.length} item{items.length !== 1 ? 's' : ''}
-          </span>
-        </div>
-        {open ? (
-          <ChevronUp size={16} className="text-slate-500" />
-        ) : (
-          <ChevronDown size={16} className="text-slate-500" />
-        )}
-      </button>
-
-      {/* Body */}
-      {open && (
-        <div className="overflow-x-auto">
-          {items.length === 0 ? (
-            <p className="text-slate-600 text-sm font-sans text-center py-6">
-              No items assigned to this agent
-            </p>
-          ) : (
-            <table className="w-full text-sm font-sans">
-              <thead>
-                <tr className="border-b border-dark-500/50 bg-dark-700/50">
-                  <th className="text-left text-slate-500 text-xs uppercase tracking-wider px-5 py-2.5 font-medium">
-                    #
-                  </th>
-                  <th className="text-left text-slate-500 text-xs uppercase tracking-wider px-5 py-2.5 font-medium">
-                    First Name
-                  </th>
-                  <th className="text-left text-slate-500 text-xs uppercase tracking-wider px-5 py-2.5 font-medium">
-                    Phone
-                  </th>
-                  <th className="text-left text-slate-500 text-xs uppercase tracking-wider px-5 py-2.5 font-medium">
-                    Notes
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item, i) => (
-                  <tr
-                    key={i}
-                    className="border-b border-dark-500/30 hover:bg-dark-600/20 transition-colors"
-                  >
-                    <td className="px-5 py-3 text-slate-600 font-mono text-xs">
-                      {String(i + 1).padStart(2, '0')}
-                    </td>
-                    <td className="px-5 py-3 text-white">{item.firstName}</td>
-                    <td className="px-5 py-3 text-slate-400 font-mono text-xs">{item.phone}</td>
-                    <td className="px-5 py-3 text-slate-500 max-w-xs truncate">
-                      {item.notes || <span className="text-slate-700 italic">—</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Main Component ────────────────────────────────────────────────────────────
-
-/**
- * Lists
- *
- * Two sections:
- * 1. Upload & Distribute — drag-and-drop zone, file preview, upload button
- * 2. Distributed Lists  — accordion showing each agent's assigned items
- */
 export default function Lists() {
+  // ── Upload state ────────────────────────────────────────────────────────────
   const [selectedFile, setSelectedFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState(null); // { totalItems, distribution[] }
-
-  const [agentLists, setAgentLists] = useState([]);
-  const [loadingLists, setLoadingLists] = useState(true);
-
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState(null); // distribution summary card
   const fileInputRef = useRef(null);
 
-  // ─── Fetch distributed lists on mount ─────────────────────────────────
+  // ── Agent lists state ───────────────────────────────────────────────────────
+  const [agentGroups, setAgentGroups] = useState([]);
+  const [isLoadingLists, setIsLoadingLists] = useState(true);
+  const [openAccordions, setOpenAccordions] = useState({});
+
+  // ── Clear modal state ───────────────────────────────────────────────────────
+  const [showClearModal, setShowClearModal] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+
+  // ── Fetch on mount ──────────────────────────────────────────────────────────
   useEffect(() => {
     fetchLists();
   }, []);
 
   const fetchLists = async () => {
-    setLoadingLists(true);
+    setIsLoadingLists(true);
     try {
-      const { data } = await axiosInstance.get('/lists');
-      setAgentLists(data.agents || []);
+      const res = await axiosInstance.get('/lists');
+      const groups = res.data.agents || [];
+      setAgentGroups(groups);
+      // Default: all accordions open so the evaluator sees content immediately
+      const defaultOpen = {};
+      groups.forEach((g) => {
+        defaultOpen[g.agentId] = true;
+      });
+      setOpenAccordions(defaultOpen);
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to load lists');
+      console.error('fetchLists error:', err);
+      toast.error(err.response?.data?.message || 'Failed to load lists.');
     } finally {
-      setLoadingLists(false);
+      setIsLoadingLists(false);
     }
   };
 
-  // ─── File selection ────────────────────────────────────────────────────
+  // ── File helpers ────────────────────────────────────────────────────────────
+  const ACCEPTED = ['.csv', '.xlsx', '.xls'];
 
-  const ALLOWED_EXTENSIONS = ['.csv', '.xlsx', '.xls'];
-
-  const handleFileSelect = (file) => {
-    if (!file) return;
+  const isValidType = (file) => {
     const ext = '.' + file.name.split('.').pop().toLowerCase();
-    if (!ALLOWED_EXTENSIONS.includes(ext)) {
-      toast.error(`Invalid file type. Only .csv, .xlsx, and .xls are accepted.`);
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('File exceeds 5 MB limit');
+    return ACCEPTED.includes(ext);
+  };
+
+  const fmtSize = (bytes) => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  };
+
+  const pickFile = (file) => {
+    if (!file) return;
+    if (!isValidType(file)) {
+      toast.error('Invalid file type. Please upload .csv, .xlsx, or .xls only.');
       return;
     }
     setSelectedFile(file);
-    setUploadResult(null);
+    setUploadResult(null); // clear previous summary when a new file is picked
   };
 
-  // ─── Drag and drop handlers ────────────────────────────────────────────
-
-  const handleDragOver = (e) => {
+  // ── Drag-and-drop handlers ──────────────────────────────────────────────────
+  const handleDragOver = useCallback((e) => {
     e.preventDefault();
     setIsDragging(true);
-  };
+  }, []);
 
-  const handleDragLeave = (e) => {
+  const handleDragLeave = useCallback((e) => {
     e.preventDefault();
     setIsDragging(false);
-  };
+  }, []);
 
-  const handleDrop = (e) => {
+  const handleDrop = useCallback((e) => {
     e.preventDefault();
     setIsDragging(false);
-    const file = e.dataTransfer.files?.[0];
-    handleFileSelect(file);
+    pickFile(e.dataTransfer.files[0]);
+  }, []);
+
+  const handleInputChange = (e) => {
+    pickFile(e.target.files[0]);
+    e.target.value = ''; // reset so same file can be re-selected after removal
   };
 
-  // ─── Upload ────────────────────────────────────────────────────────────
-
+  // ── Upload handler ──────────────────────────────────────────────────────────
   const handleUpload = async () => {
     if (!selectedFile) return;
 
     const formData = new FormData();
-    // 'file' must match the multer field name: upload.single('file')
     formData.append('file', selectedFile);
 
-    setUploading(true);
+    setIsUploading(true);
     try {
-      const { data } = await axiosInstance.post('/lists/upload', formData, {
+      const res = await axiosInstance.post('/lists/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-
-      toast.success(`${data.totalItems} items distributed among 5 agents`);
-      setUploadResult(data);
+      setUploadResult(res.data);
       setSelectedFile(null);
-      fetchLists(); // Refresh the accordion below
+      toast.success(`✅ ${res.data.totalItems} items distributed among 5 agents!`);
+      await fetchLists(); // refresh the accordion immediately
     } catch (err) {
-      const msg = err.response?.data?.message || 'Upload failed';
-      toast.error(msg);
+      toast.error(err.response?.data?.message || 'Upload failed. Please try again.');
     } finally {
-      setUploading(false);
+      setIsUploading(false);
     }
   };
 
-  // ─── Render ────────────────────────────────────────────────────────────
+  // ── Accordion toggle ────────────────────────────────────────────────────────
+  const toggleAccordion = (agentId) => {
+    setOpenAccordions((prev) => ({ ...prev, [agentId]: !prev[agentId] }));
+  };
 
+  // ── Clear handlers ──────────────────────────────────────────────────────────
+  const handleClearConfirm = async () => {
+    setIsClearing(true);
+    try {
+      const res = await axiosInstance.delete('/lists');
+      toast.success(`🗑️ Cleared ${res.data.deletedCount} item(s) successfully.`);
+      // Update UI immediately — no need for a second GET request
+      setAgentGroups([]);
+      setOpenAccordions({});
+      setUploadResult(null);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to clear lists.');
+    } finally {
+      setIsClearing(false);
+      setShowClearModal(false);
+    }
+  };
+
+  // ── Spinner SVG (reused in two buttons) ────────────────────────────────────
+  const Spinner = () => (
+    <svg
+      className="animate-spin w-4 h-4"
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
+      />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+    </svg>
+  );
+
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-8">
 
-      {/* ══════════════════════════════════════════════════════════════════
-          SECTION 1 — Upload & Distribute
-      ══════════════════════════════════════════════════════════════════ */}
-      <div>
-        <div className="mb-4">
-          <h2 className="text-white font-bold text-xl font-sans">Upload &amp; Distribute</h2>
-          <p className="text-slate-500 text-sm font-sans mt-0.5">
-            Upload a CSV or Excel file to distribute rows equally among all 5 agents
-          </p>
-        </div>
+      {/* ═══════════════════════════════════════════════════════════════════════
+          UPLOAD SECTION
+      ═══════════════════════════════════════════════════════════════════════ */}
+      <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6">
+        <h2 className="text-lg font-semibold text-white mb-5">Upload &amp; Distribute</h2>
 
-        <div className="bg-dark-700 border border-dark-500 rounded-xl p-6 shadow-card">
+        {/* Drag-and-drop zone */}
+        <div
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          onClick={() => !selectedFile && fileInputRef.current?.click()}
+          className={`
+            relative flex flex-col items-center justify-center
+            border-2 border-dashed rounded-xl p-10 transition-all duration-200
+            ${isDragging
+              ? 'border-indigo-400 bg-indigo-500/10 scale-[1.01] cursor-copy'
+              : selectedFile
+              ? 'border-emerald-500 bg-emerald-500/5 cursor-default'
+              : 'border-zinc-600 hover:border-indigo-500 hover:bg-zinc-800/60 cursor-pointer'
+            }
+          `}
+        >
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.xlsx,.xls"
+            onChange={handleInputChange}
+            className="hidden"
+          />
 
-          {/* ── Drag-and-drop zone ─────────────────────────────────────── */}
-          <div
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            onClick={() => !selectedFile && fileInputRef.current?.click()}
-            className={[
-              'rounded-xl border-2 transition-all duration-200 cursor-pointer',
-              'flex flex-col items-center justify-center py-10 px-6 text-center',
-              isDragging
-                ? 'border-accent bg-accent/5 shadow-glow'
-                : selectedFile
-                ? 'border-dark-400 bg-dark-600/40 cursor-default'
-                : 'border-dashed border-dark-400 hover:border-accent/50 hover:bg-dark-600/20',
-            ].join(' ')}
-          >
-            {/* Hidden native file input */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,.xlsx,.xls"
-              className="hidden"
-              onChange={(e) => handleFileSelect(e.target.files?.[0])}
-            />
-
-            {selectedFile ? (
-              /* ── File selected state ──────────────────────────────── */
-              <div className="flex flex-col items-center gap-3 w-full">
-                <div className="w-12 h-12 bg-emerald-500/15 rounded-xl flex items-center justify-center">
-                  <FileSpreadsheet size={22} className="text-emerald-400" />
+          {!selectedFile ? (
+            /* Empty state: prompt to drag or click */
+            <>
+              <Upload
+                className={`w-10 h-10 mb-3 ${isDragging ? 'text-indigo-400' : 'text-zinc-500'}`}
+              />
+              <p className="text-sm font-medium text-zinc-300 mb-1">
+                Drag &amp; drop your file here
+              </p>
+              <p className="text-xs text-zinc-500 mb-4">or</p>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  fileInputRef.current?.click();
+                }}
+                className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"
+              >
+                Click to Browse
+              </button>
+              <p className="text-xs text-zinc-500 mt-4">
+                Accepts: .csv, .xlsx, .xls &nbsp;•&nbsp; Max 5 MB
+              </p>
+            </>
+          ) : (
+            /* File selected: preview card */
+            <div className="w-full flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-emerald-500/20 rounded-lg">
+                  <FileSpreadsheet className="w-6 h-6 text-emerald-400" />
                 </div>
                 <div>
-                  <p className="text-white font-semibold text-sm font-sans">{selectedFile.name}</p>
-                  <p className="text-slate-500 text-xs font-sans mt-0.5">
-                    {formatBytes(selectedFile.size)}
-                  </p>
+                  <p className="text-sm font-medium text-white">{selectedFile.name}</p>
+                  <p className="text-xs text-zinc-400">{fmtSize(selectedFile.size)}</p>
                 </div>
-                {/* Remove button */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedFile(null);
-                    setUploadResult(null);
-                    if (fileInputRef.current) fileInputRef.current.value = '';
-                  }}
-                  className="flex items-center gap-1.5 text-slate-500 hover:text-red-400 text-xs font-sans transition-colors"
-                >
-                  <X size={13} />
-                  Remove file
-                </button>
               </div>
-            ) : (
-              /* ── Empty / drag state ───────────────────────────────── */
-              <>
-                <div className={[
-                  'w-14 h-14 rounded-2xl flex items-center justify-center mb-4 transition-colors',
-                  isDragging ? 'bg-accent/20' : 'bg-dark-600',
-                ].join(' ')}>
-                  <Upload size={24} className={isDragging ? 'text-accent' : 'text-slate-500'} />
-                </div>
-                <p className="text-white font-semibold text-sm font-sans">
-                  {isDragging ? 'Drop your file here' : 'Drag & drop your CSV/XLSX/XLS here'}
-                </p>
-                <p className="text-slate-600 text-xs font-sans mt-1 mb-3">or</p>
-                <span className="inline-flex items-center gap-1.5 bg-dark-600 hover:bg-dark-500 border border-dark-400 text-slate-300 text-xs font-sans font-medium px-4 py-2 rounded-lg transition-colors">
-                  Click to Browse
-                </span>
-                <p className="text-slate-600 text-xs font-sans mt-3">
-                  Accepts: .csv, .xlsx, .xls &nbsp;•&nbsp; Max 5 MB
-                </p>
-              </>
-            )}
-          </div>
-
-          {/* ── Upload button ──────────────────────────────────────────── */}
-          <div className="mt-4 flex justify-end">
-            <button
-              onClick={handleUpload}
-              disabled={!selectedFile || uploading}
-              className="flex items-center gap-2 bg-accent hover:bg-accent-hover
-                         disabled:opacity-40 disabled:cursor-not-allowed
-                         text-white font-semibold font-sans text-sm
-                         px-5 py-2.5 rounded-lg transition-colors shadow-glow"
-            >
-              {uploading ? (
-                <>
-                  <Loader2 size={15} className="animate-spin" />
-                  Processing…
-                </>
-              ) : (
-                <>
-                  <Upload size={15} />
-                  Upload &amp; Distribute
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* ── Distribution result summary ─────────────────────────── */}
-          {uploadResult && (
-            <div className="mt-5 bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-5 py-4">
-              <div className="flex items-center gap-2 mb-3">
-                <CheckCircle2 size={16} className="text-emerald-400" />
-                <p className="text-emerald-400 font-semibold text-sm font-sans">
-                  {uploadResult.totalItems} items distributed among 5 agents
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {uploadResult.distribution.map((d, i) => (
-                  <div
-                    key={i}
-                    className="bg-dark-700 border border-dark-500 rounded-lg px-3 py-1.5 flex items-center gap-2"
-                  >
-                    <span className="text-slate-400 text-xs font-sans">{d.agentName}</span>
-                    <span className="bg-accent/20 text-accent-light text-xs font-mono px-1.5 py-0.5 rounded">
-                      {d.count}
-                    </span>
-                  </div>
-                ))}
-              </div>
+              {/* Remove file button */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedFile(null);
+                }}
+                className="p-1.5 hover:bg-zinc-700 rounded-lg transition-colors"
+                title="Remove file"
+              >
+                <X className="w-4 h-4 text-zinc-400" />
+              </button>
             </div>
           )}
         </div>
-      </div>
 
-      {/* ══════════════════════════════════════════════════════════════════
-          SECTION 2 — Distributed Lists (agent accordion)
-      ══════════════════════════════════════════════════════════════════ */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-white font-bold text-xl font-sans">Distributed Lists</h2>
-            <p className="text-slate-500 text-sm font-sans mt-0.5">
-              Each agent's assigned items from all uploads
+        {/* Upload & Distribute button */}
+        <button
+          type="button"
+          onClick={handleUpload}
+          disabled={!selectedFile || isUploading}
+          className={`
+            mt-4 w-full py-3 rounded-xl font-medium text-sm
+            flex items-center justify-center gap-2 transition-all duration-200
+            ${!selectedFile || isUploading
+              ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+              : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+            }
+          `}
+        >
+          {isUploading ? (
+            <><Spinner /> Distributing...</>
+          ) : (
+            <><Upload className="w-4 h-4" /> Upload &amp; Distribute</>
+          )}
+        </button>
+
+        {/* Distribution summary — shown immediately after a successful upload */}
+        {uploadResult && (
+          <div className="mt-5 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl">
+            <p className="text-sm font-semibold text-emerald-400 mb-3">
+              ✅ {uploadResult.totalItems} items distributed among{' '}
+              {uploadResult.distribution.length} agents
             </p>
-          </div>
-          <button
-            onClick={fetchLists}
-            disabled={loadingLists}
-            className="flex items-center gap-1.5 text-slate-500 hover:text-white text-xs font-sans
-                       border border-dark-500 hover:border-dark-400 bg-dark-700 hover:bg-dark-600
-                       px-3 py-2 rounded-lg transition-colors"
-          >
-            <RefreshCw size={13} className={loadingLists ? 'animate-spin' : ''} />
-            Refresh
-          </button>
-        </div>
-
-        {/* Loading state */}
-        {loadingLists && (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-12 bg-dark-700 border border-dark-500 rounded-xl animate-pulse" />
-            ))}
-          </div>
-        )}
-
-        {/* Empty state */}
-        {!loadingLists && agentLists.length === 0 && (
-          <div className="bg-dark-700 border border-dark-500 rounded-xl py-16 text-center shadow-card">
-            <div className="flex flex-col items-center gap-3">
-              <div className="w-14 h-14 rounded-full bg-dark-600 flex items-center justify-center">
-                <AlertCircle size={22} className="text-slate-600" />
-              </div>
-              <p className="text-slate-500 font-sans text-sm">
-                No lists uploaded yet
-              </p>
-              <p className="text-slate-700 font-sans text-xs">
-                Upload a CSV or Excel file above to get started
-              </p>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              {uploadResult.distribution.map((d, i) => (
+                <div key={i} className="bg-zinc-800 rounded-lg p-2 text-center">
+                  <p className="text-xs text-zinc-400 truncate">{d.agentName}</p>
+                  <p className="text-2xl font-bold text-white">{d.count}</p>
+                  <p className="text-[10px] text-zinc-500">items</p>
+                </div>
+              ))}
             </div>
           </div>
         )}
+      </div>
 
-        {/* Agent accordion — one section per agent */}
-        {!loadingLists && agentLists.length > 0 && (
+      {/* ═══════════════════════════════════════════════════════════════════════
+          DISTRIBUTED LISTS SECTION
+      ═══════════════════════════════════════════════════════════════════════ */}
+      <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6">
+
+        {/* Section header: title + Refresh + Clear All */}
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-lg font-semibold text-white">Distributed Lists</h2>
+
+          <div className="flex items-center gap-2">
+            {/* Refresh */}
+            <button
+              type="button"
+              onClick={fetchLists}
+              disabled={isLoadingLists}
+              className="flex items-center gap-2 px-3 py-2 text-sm text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoadingLists ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+
+            {/* Clear All — only rendered when there is data to clear */}
+            {agentGroups.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowClearModal(true)}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:text-white hover:bg-red-600 border border-red-700 hover:border-red-600 rounded-lg transition-all duration-200"
+                title="Delete all distributed list items"
+              >
+                <Trash2 className="w-4 h-4" />
+                Clear All
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Loading skeletons */}
+        {isLoadingLists ? (
           <div className="space-y-3">
-            {agentLists.map((ag, i) => (
-              <AccordionSection
-                key={ag.agentId}
-                agentName={ag.agentName}
-                items={ag.items}
-                defaultOpen={i === 0} // First agent open by default for the demo
-              />
+            {[1, 2, 3].map((n) => (
+              <div key={n} className="animate-pulse h-12 bg-zinc-800 rounded-xl" />
+            ))}
+          </div>
+
+        ) : agentGroups.length === 0 ? (
+          /* Empty state */
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <FileSpreadsheet className="w-14 h-14 text-zinc-700 mb-4" />
+            <p className="text-zinc-400 font-medium">No lists uploaded yet.</p>
+            <p className="text-zinc-600 text-sm mt-1">
+              Upload a CSV file above to get started.
+            </p>
+          </div>
+
+        ) : (
+          /* Agent accordion */
+          <div className="space-y-3">
+            {agentGroups.map((group) => (
+              <div
+                key={group.agentId}
+                className="border border-zinc-700 rounded-xl overflow-hidden"
+              >
+                {/* Accordion header */}
+                <button
+                  type="button"
+                  onClick={() => toggleAccordion(group.agentId)}
+                  className="w-full flex items-center justify-between px-5 py-4 bg-zinc-800 hover:bg-zinc-700/60 transition-colors text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-semibold text-white">
+                      {group.agentName}
+                    </span>
+                    <span className="text-xs font-medium px-2 py-0.5 bg-indigo-500/20 text-indigo-300 rounded-full border border-indigo-500/30">
+                      {group.items.length} item{group.items.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  {openAccordions[group.agentId] ? (
+                    <ChevronUp className="w-4 h-4 text-zinc-400" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-zinc-400" />
+                  )}
+                </button>
+
+                {/* Accordion body — table */}
+                {openAccordions[group.agentId] && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-zinc-900">
+                          <th className="px-5 py-3 text-left text-xs font-semibold text-zinc-400 uppercase tracking-wider w-10">
+                            #
+                          </th>
+                          <th className="px-5 py-3 text-left text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                            First Name
+                          </th>
+                          <th className="px-5 py-3 text-left text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                            Phone
+                          </th>
+                          <th className="px-5 py-3 text-left text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                            Notes
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-800">
+                        {group.items.map((item, idx) => (
+                          <tr
+                            key={idx}
+                            className="hover:bg-zinc-800/50 transition-colors"
+                          >
+                            <td className="px-5 py-3 text-zinc-500 text-xs">
+                              {idx + 1}
+                            </td>
+                            <td className="px-5 py-3 text-zinc-200 font-medium">
+                              {item.firstName}
+                            </td>
+                            <td className="px-5 py-3 text-zinc-300">{item.phone}</td>
+                            <td className="px-5 py-3 text-zinc-400">
+                              {item.notes || (
+                                <span className="text-zinc-600 italic">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* ═══════════════════════════════════════════════════════════════════════
+          CLEAR CONFIRMATION MODAL
+          Rendered into the DOM but only visible when showClearModal === true.
+          Clicking the backdrop cancels (unless a clear is already in progress).
+      ═══════════════════════════════════════════════════════════════════════ */}
+      {showClearModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          {/* Semi-transparent backdrop — click outside to dismiss */}
+          <div
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={() => !isClearing && setShowClearModal(false)}
+          />
+
+          {/* Modal card */}
+          <div className="relative z-10 w-full max-w-md bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl p-6">
+
+            {/* Warning icon */}
+            <div className="flex items-center justify-center w-14 h-14 bg-red-500/10 border border-red-500/30 rounded-full mx-auto mb-5">
+              <AlertTriangle className="w-7 h-7 text-red-400" />
+            </div>
+
+            <h3 className="text-lg font-semibold text-white text-center mb-2">
+              Clear All Lists?
+            </h3>
+            <p className="text-sm text-zinc-400 text-center mb-2">
+              This will permanently delete all distributed list items.
+            </p>
+            <p className="text-xs text-zinc-500 text-center mb-7">
+              Your admin account and all 5 agents will remain untouched.
+            </p>
+
+            {/* Action buttons */}
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowClearModal(false)}
+                disabled={isClearing}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium text-zinc-300 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleClearConfirm}
+                disabled={isClearing}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white bg-red-600 hover:bg-red-500 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isClearing ? (
+                  <><Spinner /> Clearing...</>
+                ) : (
+                  <><Trash2 className="w-4 h-4" /> Yes, Clear All</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
